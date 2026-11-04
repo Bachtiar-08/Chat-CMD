@@ -1,31 +1,43 @@
 import os
 import asyncio
 import websockets
+from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
 
 SERVER = "wss://web-production-7dc24.up.railway.app"
 TOKEN = os.environ.get("CHATCMD_TOKEN", "")
 
 
-async def receiver(ws):
+async def receiver(ws, session):
     try:
         async for msg in ws:
-            print("\r" + msg + "\n> ", end="", flush=True)
+            print(msg)
     except websockets.ConnectionClosed:
-        print("\n[Koneksi terputus]")
-        os._exit(0)
+        pass
+    print("[Koneksi terputus]")
+    try:
+        session.app.exit(exception=EOFError)
+    except Exception:
+        pass
 
 
 async def main(name):
     async with websockets.connect(SERVER, open_timeout=30, ping_interval=20) as ws:
         await ws.send(TOKEN)
         await ws.send(name)
-        task = asyncio.create_task(receiver(ws))
-        while True:
-            text = await asyncio.to_thread(input, "> ")
-            if text.strip() == "/quit":
-                break
-            if text.strip():
-                await ws.send(text)
+        session = PromptSession()
+        task = asyncio.create_task(receiver(ws, session))
+        with patch_stdout():
+            while True:
+                try:
+                    text = await session.prompt_async("> ")
+                except (EOFError, KeyboardInterrupt):
+                    break
+                text = text.strip()
+                if text == "/quit":
+                    break
+                if text:
+                    await ws.send(text)
         task.cancel()
 
 
