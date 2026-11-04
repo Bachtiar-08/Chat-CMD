@@ -4,7 +4,7 @@ import websockets
 
 TOKEN = os.environ.get("CHATCMD_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8765))
-MAX_USERS = 2
+MAX_USERS = 3
 
 clients = {}  # ws -> nama
 
@@ -30,7 +30,7 @@ async def handler(ws):
         return
 
     if len(clients) >= MAX_USERS:
-        await ws.send("[server] Server penuh (maks 2 pengguna).")
+        await ws.send("[server] Server penuh (maks 3 pengguna).")
         await ws.close(code=4002, reason="full")
         return
 
