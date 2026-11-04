@@ -5,6 +5,7 @@ import websockets
 TOKEN = os.environ.get("CHATCMD_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8765))
 MAX_USERS = 10
+TYPING = "\x01typing"
 
 clients = {}  # ws -> nama
 
@@ -79,7 +80,9 @@ async def handler(ws):
 
     try:
         async for message in ws:
-            if message.startswith("/"):
+            if message == TYPING:
+                await broadcast(f"{TYPING}:{name}", sender=ws)
+            elif message.startswith("/"):
                 await handle_command(ws, name, message)
             else:
                 await broadcast(f"{name}: {message}", sender=ws)
