@@ -15,9 +15,10 @@ async def receiver(ws):
         os._exit(0)
 
 
-async def main():
+async def main(name):
     async with websockets.connect(SERVER, open_timeout=30, ping_interval=20) as ws:
         await ws.send(TOKEN)
+        await ws.send(name)
         task = asyncio.create_task(receiver(ws))
         while True:
             text = await asyncio.to_thread(input, "> ")
@@ -28,7 +29,8 @@ async def main():
         task.cancel()
 
 
+name = input("Nama kamu: ").strip()
 try:
-    asyncio.run(main())
+    asyncio.run(main(name))
 except Exception as e:
     print(f"Gagal konek: {e}")

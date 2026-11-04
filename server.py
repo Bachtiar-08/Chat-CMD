@@ -1,6 +1,5 @@
 import os
 import asyncio
-import itertools
 import websockets
 
 TOKEN = os.environ.get("CHATCMD_TOKEN", "")
@@ -8,7 +7,6 @@ PORT = int(os.environ.get("PORT", 8765))
 MAX_USERS = 2
 
 clients = {}  # ws -> nama
-counter = itertools.count(1)
 
 
 async def broadcast(message, sender=None):
@@ -21,7 +19,6 @@ async def broadcast(message, sender=None):
 
 
 async def handler(ws):
-    # Pesan pertama dari client = token
     try:
         token = await asyncio.wait_for(ws.recv(), timeout=10)
     except Exception:
@@ -37,7 +34,15 @@ async def handler(ws):
         await ws.close(code=4002, reason="full")
         return
 
-    name = f"User{next(counter)}"
+    try:
+        name = (await asyncio.wait_for(ws.recv(), timeout=10)).strip()[:20]
+    except Exception:
+        return
+    if not name:
+        name = "Anonim"
+    if name in clients.values():
+        name += "2"
+
     clients[ws] = name
     await ws.send(f"[server] Terhubung sebagai {name}. Ketik /quit untuk keluar.")
     await broadcast(f"[server] {name} bergabung.", sender=ws)
