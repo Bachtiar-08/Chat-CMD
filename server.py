@@ -1,66 +1,62 @@
-import asyncio
-import json
 import os
+import asyncio
+import itertools
 import websockets
 
-TOKEN = os.environ["CHATCMD_TOKEN"]
-PORT = int(os.environ.get("PORT", 10000))
-CLIENTS = set()
+TOKEN = os.environ.get("CHATCMD_TOKEN", "")
+PORT = int(os.environ.get("PORT", 8765))
+MAX_USERS = 2
+
+clients = {}  # ws -> nama
+counter = itertools.count(1)
+
+
+async def broadcast(message, sender=None):
+    for ws in list(clients):
+        if ws is not sender:
+            try:
+                await ws.send(message)
+            except Exception:
+                pass
+
 
 async def handler(ws):
+    # Pesan pertama dari client = token
     try:
-        auth = json.loads(await asyncio.wait_for(ws.recv(), 10))
+        token = await asyncio.wait_for(ws.recv(), timeout=10)
+    except Exception:
+        return
 
-        if auth.get("token") != TOKEN:
-            await ws.close(code=1008)
-            return
+    if TOKEN and token != TOKEN:
+        await ws.send("[server] Token salah.")
+        await ws.close(code=4001, reason="unauthorized")
+        return
 
-        if len(CLIENTS) >= 2:
-            await ws.close(code=1013)
-            return
+    if len(clients) >= MAX_USERS:
+        await ws.send("[server] Server penuh (maks 2 pengguna).")
+        await ws.close(code=4002, reason="full")
+        return
 
-        CLIENTS.add(ws)
-        await ws.send(json.dumps({"type": "ready"}))
+    name = f"User{next(counter)}"
+    clients[ws] = name
+    await ws.send(f"[server] Terhubung sebagai {name}. Ketik /quit untuk keluar.")
+    await broadcast(f"[server] {name} bergabung.", sender=ws)
 
-        async for raw in ws:
-            data = json.loads(raw)
-
-            if data.get("type") != "message":
-                continue
-
-            message = str(data.get("text", ""))[:1000]
-
-            if not message.strip():
-                continue
-
-            outgoing = json.dumps({
-                "type": "message",
-                "sender": str(data.get("sender", "User"))[:30],
-                "text": message
-            })
-
-            for client in list(CLIENTS):
-                if client != ws:
-                    await client.send(outgoing)
-
-    except (asyncio.TimeoutError, ValueError):
-        await ws.close()
+    try:
+        async for message in ws:
+            await broadcast(f"{name}: {message}", sender=ws)
     except websockets.ConnectionClosed:
         pass
     finally:
-        CLIENTS.discard(ws)
+        clients.pop(ws, None)
+        await broadcast(f"[server] {name} keluar.")
+
 
 async def main():
-    print(f"ChatCMD berjalan pada port {PORT}")
-
-    async with websockets.serve(
-        handler,
-        "0.0.0.0",
-        PORT,
-        max_size=4096,
-        ping_interval=20,
-        ping_timeout=20
-    ):
+    async with websockets.serve(handler, "0.0.0.0", PORT):
+        print(f"Server jalan di port {PORT}", flush=True)
         await asyncio.Future()
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
