@@ -1,5 +1,7 @@
-import os
 import asyncio
+import os
+from datetime import datetime
+
 import websockets
 
 TOKEN = os.environ.get("CHATCMD_TOKEN", "")
@@ -7,24 +9,38 @@ PORT = int(os.environ.get("PORT", 8765))
 MAX_USERS = 10
 TYPING = "\x01typing"
 
-clients = {}  # ws -> nama
+clients = {}  # websocket -> username
 
 HELP = (
-    "[server] Perintah:\n"
-    "  /users            daftar yang online\n"
-    "  /pm nama pesan    pesan pribadi\n"
-    "  /help             bantuan ini\n"
-    "  /quit             keluar"
+    "[server] Perintah tersedia:\n"
+    "  /users            melihat pengguna online\n"
+    "  /pm nama pesan    mengirim pesan pribadi\n"
+    "  /help             menampilkan bantuan\n"
+    "  /clear            membersihkan terminal (di sisi client)\n"
+    "  /quit             keluar dari chat"
 )
+
+
+def timestamp():
+    return datetime.now().strftime("[%H:%M:%S]")
+
+
+def stamped(message):
+    return f"{timestamp()} {message}"
+
+
+async def send_safe(ws, message):
+    try:
+        await ws.send(message)
+        return True
+    except websockets.ConnectionClosed:
+        return False
 
 
 async def broadcast(message, sender=None):
     for ws in list(clients):
         if ws is not sender:
-            try:
-                await ws.send(message)
-            except Exception:
-                pass
+            await send_safe(ws, message)
 
 
 async def handle_command(ws, name, text):
@@ -32,72 +48,49 @@ async def handle_command(ws, name, text):
     cmd = parts[0].lower()
 
     if cmd == "/users":
-        await ws.send("[server] Online: " + ", ".join(clients.values()))
+        online = ", ".join(clients.values()) or "Belum ada pengguna."
+        await send_safe(ws, stamped("[server] Online: " + online))
+
     elif cmd == "/help":
-        await ws.send(HELP)
+        await send_safe(ws, HELP)
+
     elif cmd == "/pm":
         if len(parts) < 3:
-            await ws.send("[server] Format: /pm nama pesan")
+            await send_safe(ws, "[server] Format: /pm nama pesan")
             return
         target, msg = parts[1], parts[2]
-        for other, other_name in clients.items():
+        for other, other_name in list(clients.items()):
             if other_name.lower() == target.lower():
-                await other.send(f"[PM dari {name}] {msg}")
-                await ws.send(f"[PM ke {other_name}] {msg}")
+                await send_safe(other, stamped(f"[PM dari {name}] {msg}"))
+                await send_safe(ws, stamped(f"[PM ke {other_name}] {msg}"))
                 return
-        await ws.send(f"[server] {target} tidak ditemukan.")
+        await send_safe(ws, stamped(f"[server] {target} tidak ditemukan."))
+
+    elif cmd == "/quit":
+        await send_safe(ws, stamped("[server] Sampai jumpa!"))
+        await ws.close(code=1000, reason="user quit")
+
     else:
-        await ws.send("[server] Perintah tidak dikenal. Ketik /help")
+        await send_safe(ws, "[server] Perintah tidak dikenal. Ketik /help")
 
 
 async def handler(ws):
-    try:
-        token = await asyncio.wait_for(ws.recv(), timeout=10)
-    except Exception:
-        return
-
-    if TOKEN and token != TOKEN:
-        await ws.send("[server] Token salah.")
-        await ws.close(code=4001, reason="unauthorized")
-        return
-
-    if len(clients) >= MAX_USERS:
-        await ws.send(f"[server] Server penuh (maks {MAX_USERS} pengguna).")
-        await ws.close(code=4002, reason="full")
-        return
+    name = None
 
     try:
-        name = (await asyncio.wait_for(ws.recv(), timeout=10)).strip()[:20]
-    except Exception:
-        return
-    name = name.replace(" ", "_") or "Anonim"
-    while name in clients.values():
-        name += "2"
+        try:
+            token = await asyncio.wait_for(ws.recv(), timeout=10)
+        except (asyncio.TimeoutError, websockets.ConnectionClosed):
+            return
 
-    clients[ws] = name
-    await ws.send(f"[server] Terhubung sebagai {name}. Ketik /help untuk perintah.")
-    await broadcast(f"[server] {name} bergabung.", sender=ws)
+        if TOKEN and token != TOKEN:
+            await send_safe(ws, "[server] Token salah.")
+            await ws.close(code=4001, reason="unauthorized")
+            return
 
-    try:
-        async for message in ws:
-            if message == TYPING:
-                await broadcast(f"{TYPING}:{name}", sender=ws)
-            elif message.startswith("/"):
-                await handle_command(ws, name, message)
-            else:
-                await broadcast(f"{name}: {message}", sender=ws)
-    except websockets.ConnectionClosed:
-        pass
-    finally:
-        clients.pop(ws, None)
-        await broadcast(f"[server] {name} keluar.")
+        if len(clients) >= MAX_USERS:
+            await send_safe(ws, f"[server] Server penuh (maks {MAX_USERS} pengguna).")
+            await ws.close(code=4002, reason="full")
+            return
 
-
-async def main():
-    async with websockets.serve(handler, "0.0.0.0", PORT):
-        print(f"Server jalan di port {PORT}", flush=True)
-        await asyncio.Future()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        try:
